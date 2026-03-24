@@ -86,13 +86,13 @@ class RiskScorerService:
 
     def _score_transaction_frequency(self, tx_count: int) -> float:
         """Score based on transaction frequency."""
-        if tx_count > 1000:
+        if tx_count >= 1000:
             return 80.0  # Very high activity
-        elif tx_count > 500:
+        elif tx_count >= 500:
             return 60.0
-        elif tx_count > 100:
+        elif tx_count >= 100:
             return 40.0
-        elif tx_count > 10:
+        elif tx_count >= 10:
             return 20.0
         else:
             return 10.0
