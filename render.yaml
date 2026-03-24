@@ -1,0 +1,13 @@
+# Render deployment configuration
+# Deploy at: https://render.com
+
+services:
+  - type: web
+    name: chaintrace-api
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    envVars:
+      - key: BACKEND_CORS_ORIGINS
+        value: '["https://youss.github.io"]'
+    healthCheckPath: /api/v1/health
