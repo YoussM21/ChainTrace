@@ -80,11 +80,27 @@ def parse_tx(tx_data: dict) -> dict:
         "total_output": sum(o["value"] for o in outputs),
     }
 
+KNOWN_HIGH_RISK = {
+    "1HQ3Go3ggs8pFnXuHVHRytPCq5fGG8Hbhx": "Binance Hot Wallet",
+    "bc1qm34lsc65zpw79lxes69zkqmk6ee3ewf0j77s3h": "Binance",
+    "1NDyJtNTjmwk5xPNhjgAMu4HDHigtobu1s": "Binance Cold Wallet",
+    "385cR5DM96n1HvBDMzLHPYcw89fZAXULJP": "Binance-BTC-Cold",
+}
+
+SANCTIONED_ADDRESSES = {
+    "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh": "OFAC Sanctioned",
+    "12t9YDPgwueZ9NyMgw519p7AA8isjr6SMw": "OFAC Sanctioned",
+}
+
 def calc_risk(address: str, addr_info: dict, txs: list) -> dict:
     factors = {}
     flags = []
     tx_count = addr_info["tx_count"]
+    total_received = addr_info["total_received"]
+    total_sent = addr_info["total_sent"]
+    balance = addr_info["balance"]
 
+    # 1. Transaction Frequency
     if tx_count >= 1000:
         factors["transaction_frequency"] = 80.0
         flags.append("HIGH_TRANSACTION_VOLUME")
@@ -98,8 +114,9 @@ def calc_risk(address: str, addr_info: dict, txs: list) -> dict:
     else:
         factors["transaction_frequency"] = 10.0
 
-    if addr_info["total_received"] > 0:
-        ratio = addr_info["total_sent"] / addr_info["total_received"]
+    # 2. High Velocity (rapid fund movement)
+    if total_received > 0:
+        ratio = total_sent / total_received
         if ratio > 0.95 and tx_count > 10:
             factors["high_velocity"] = 40.0
             flags.append("RAPID_FUND_MOVEMENT")
@@ -108,6 +125,7 @@ def calc_risk(address: str, addr_info: dict, txs: list) -> dict:
     else:
         factors["high_velocity"] = 0
 
+    # 3. Mixing Pattern Detection
     mixing = 0
     for tx in txs[:10]:
         if len(tx["outputs"]) > 3:
@@ -119,13 +137,105 @@ def calc_risk(address: str, addr_info: dict, txs: list) -> dict:
     if mixing > 20:
         flags.append("POTENTIAL_MIXING_SERVICE")
 
-    overall = sum(factors.values()) / len(factors) if factors else 0
-    level = "HIGH" if overall >= 60 else "MEDIUM" if overall >= 40 else "LOW"
+    # 4. Round Number Transactions (structuring/layering)
+    round_count = 0
+    for tx in txs[:15]:
+        for out in tx["outputs"]:
+            val = out["value"]
+            if val > 0.01 and (val == round(val, 1) or val == round(val, 0)):
+                round_count += 1
+    if round_count >= 5:
+        factors["round_numbers"] = min(round_count * 5, 40)
+        flags.append("STRUCTURING_PATTERN")
+    else:
+        factors["round_numbers"] = round_count * 3
+
+    # 5. Large Value Transfers
+    large_transfers = 0
+    for tx in txs:
+        if tx["total_output"] > 10:  # > 10 BTC
+            large_transfers += 1
+    if large_transfers > 0:
+        factors["large_transfers"] = min(large_transfers * 15, 50)
+        if large_transfers >= 3:
+            flags.append("LARGE_VALUE_TRANSFERS")
+    else:
+        factors["large_transfers"] = 0
+
+    # 6. Dormant Address Reactivation
+    if tx_count <= 5 and total_received > 1:
+        factors["dormant_reactivation"] = 30.0
+        flags.append("LOW_ACTIVITY_HIGH_VALUE")
+    else:
+        factors["dormant_reactivation"] = 0
+
+    # 7. Known Exchange/Service Detection
+    if address in KNOWN_HIGH_RISK:
+        factors["known_entity"] = 20.0
+        flags.append(f"KNOWN_ENTITY: {KNOWN_HIGH_RISK[address]}")
+    else:
+        factors["known_entity"] = 0
+
+    # 8. Sanctioned Address Check
+    if address in SANCTIONED_ADDRESSES:
+        factors["sanctioned"] = 100.0
+        flags.append(f"SANCTIONED_ADDRESS: {SANCTIONED_ADDRESSES[address]}")
+    else:
+        factors["sanctioned"] = 0
+
+    # 9. Peeling Chain Detection (many small outputs, one large change)
+    peeling_score = 0
+    for tx in txs[:10]:
+        outputs = tx["outputs"]
+        if len(outputs) >= 2:
+            values = sorted([o["value"] for o in outputs], reverse=True)
+            if len(values) >= 2 and values[0] > sum(values[1:]) * 5:
+                peeling_score += 8
+    factors["peeling_chain"] = min(peeling_score, 40)
+    if peeling_score > 20:
+        flags.append("PEELING_CHAIN_PATTERN")
+
+    # 10. Fan-out Pattern (one input, many outputs)
+    fanout_score = 0
+    for tx in txs[:10]:
+        if len(tx["inputs"]) <= 2 and len(tx["outputs"]) > 10:
+            fanout_score += 10
+    factors["fanout_pattern"] = min(fanout_score, 40)
+    if fanout_score > 20:
+        flags.append("DISTRIBUTION_PATTERN")
+
+    # Calculate overall score (weighted average)
+    weights = {
+        "transaction_frequency": 1.0,
+        "high_velocity": 1.2,
+        "mixing_pattern": 1.5,
+        "round_numbers": 0.8,
+        "large_transfers": 1.0,
+        "dormant_reactivation": 0.7,
+        "known_entity": 0.5,
+        "sanctioned": 2.0,
+        "peeling_chain": 1.3,
+        "fanout_pattern": 1.0,
+    }
+
+    weighted_sum = sum(factors[k] * weights.get(k, 1.0) for k in factors)
+    total_weight = sum(weights.get(k, 1.0) for k in factors)
+    overall = weighted_sum / total_weight if total_weight > 0 else 0
+
+    # Determine risk level
+    if overall >= 70 or "SANCTIONED_ADDRESS" in str(flags):
+        level = "CRITICAL"
+    elif overall >= 50:
+        level = "HIGH"
+    elif overall >= 30:
+        level = "MEDIUM"
+    else:
+        level = "LOW"
 
     return {
         "address": address,
         "overall_score": round(overall, 1),
-        "factors": factors,
+        "factors": {k: round(v, 1) for k, v in factors.items()},
         "risk_level": level,
         "flags": flags,
     }
