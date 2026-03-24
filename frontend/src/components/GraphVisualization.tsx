@@ -8,6 +8,16 @@ interface GraphVisualizationProps {
   onNodeClick?: (node: any) => void;
 }
 
+interface InternalNode {
+  id: string;
+  label: string;
+  type: string;
+  risk_score: number;
+  value: number;
+  partial?: boolean;
+  [key: string]: any;
+}
+
 export function GraphVisualization({ graph, onNodeClick }: GraphVisualizationProps) {
   const graphRef = useRef<any>();
   const [dimensions, setDimensions] = useState({ width: 800, height: 600 });
@@ -34,7 +44,7 @@ export function GraphVisualization({ graph, onNodeClick }: GraphVisualizationPro
     const nodeIds = new Set(graph.nodes.map((node) => node.id));
 
     // Create nodes from the graph data
-    const nodes = graph.nodes.map((node) => ({
+    const nodes: InternalNode[] = graph.nodes.map((node) => ({
       id: node.id,
       label: node.label,
       type: node.type,
