@@ -7,11 +7,12 @@ class Settings(BaseSettings):
     PROJECT_NAME: str = "ChainTrace"
     API_V1_PREFIX: str = "/api/v1"
 
-    # CORS - includes localhost for dev and GitHub Pages for production
+    # CORS - includes localhost for dev and production domains
     BACKEND_CORS_ORIGINS: List[str] = [
         "http://localhost:5173",
         "http://localhost:3000",
-        "https://youss.github.io",
+        "https://youssm21.github.io",
+        "https://chain-trace-wine.vercel.app",
     ]
 
     # API Keys
